@@ -1,4 +1,5 @@
 import os
+import fcntl
 import subprocess
 import sys
 import urllib.request
@@ -20,6 +21,13 @@ def test_hash_encoder_is_stable_across_python_processes() -> None:
         outputs.append(subprocess.check_output([sys.executable, "-c", code], env=env, text=True))
 
     assert outputs[0] == outputs[1]
+
+
+def test_index_initialization_lock_is_exclusive(tmp_path) -> None:
+    with web_demo.index_initialization_lock(tmp_path):
+        with (tmp_path / ".index-initialization.lock").open("a+") as competing_file:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(competing_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def test_failed_download_never_leaves_a_reusable_partial_file(tmp_path, monkeypatch) -> None:

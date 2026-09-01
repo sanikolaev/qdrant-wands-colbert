@@ -73,6 +73,8 @@ The first `docker compose up` automatically downloads WANDS, downloads the model
 
 On later starts, the application validates the stored index signature and point counts. If they match the configured encoder/query/document/seed inputs, it logs `Reusing existing Qdrant index ...` and skips embedding and upsert. Changing those inputs rebuilds the collections. Normal `docker compose down` keeps all data; the operator removes it explicitly with:
 
+Dataset download and index creation are serialized by a lock file in the shared `wands_data` volume, so concurrent Compose app processes cannot delete or mix each other's collections.
+
 ```bash
 docker compose down -v
 ```

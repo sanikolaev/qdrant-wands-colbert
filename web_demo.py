@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -324,6 +325,19 @@ def wait_for_qdrant(client: QdrantClient, timeout_seconds: int = 120) -> None:
             time.sleep(1)
 
 
+@contextlib.contextmanager
+def index_initialization_lock(data_dir: Path):
+    """Serialize dataset/index initialization across Compose app processes."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = data_dir / ".index-initialization.lock"
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def query_hits(client: QdrantClient, collection: str, using: str, vector: Any, labels: dict[str, int] | None, limit: int) -> tuple[list[SearchHit], list[str], float]:
     started = time.perf_counter()
     response = client.query_points(
@@ -355,40 +369,41 @@ def query_hits(client: QdrantClient, collection: str, using: str, vector: Any, l
 
 
 def build_state(args: argparse.Namespace) -> DemoState:
-    download_if_missing(args.data_dir)
-    queries = read_queries(args.data_dir / "query.csv", args.queries)
-    qrels = read_labels(args.data_dir / "label.csv", {query.query_id for query in queries})
-    needed_ids = {doc_id for labels in qrels.values() for doc_id, gain in labels.items() if gain > 0}
-    products = read_products(args.data_dir / "product.csv", needed_ids, args.docs, args.seed)
-    product_ids = {product.product_id for product in products}
-    qrels = {qid: {doc_id: gain for doc_id, gain in labels.items() if doc_id in product_ids} for qid, labels in qrels.items()}
-    queries = [query for query in queries if any(gain > 0 for gain in qrels[query.query_id].values())]
-    if not queries:
-        raise RuntimeError("No labelled WANDS queries remain after sampling products; increase --queries or --docs")
+    with index_initialization_lock(args.data_dir):
+        download_if_missing(args.data_dir)
+        queries = read_queries(args.data_dir / "query.csv", args.queries)
+        qrels = read_labels(args.data_dir / "label.csv", {query.query_id for query in queries})
+        needed_ids = {doc_id for labels in qrels.values() for doc_id, gain in labels.items() if gain > 0}
+        products = read_products(args.data_dir / "product.csv", needed_ids, args.docs, args.seed)
+        product_ids = {product.product_id for product in products}
+        qrels = {qid: {doc_id: gain for doc_id, gain in labels.items() if doc_id in product_ids} for qid, labels in qrels.items()}
+        queries = [query for query in queries if any(gain > 0 for gain in qrels[query.query_id].values())]
+        if not queries:
+            raise RuntimeError("No labelled WANDS queries remain after sampling products; increase --queries or --docs")
 
-    dense_model: Any
-    colbert_model: Any
-    if args.encoder == "fastembed":
-        dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-        colbert_model = LateInteractionTextEmbedding(model_name="colbert-ir/colbertv2.0")
-        encoder_name = "BGE dense + ColBERTv2"
-    else:
-        dense_model = HashTextEmbedding()
-        colbert_model = HashLateInteractionEmbedding()
-        encoder_name = "hash smoke encoder"
+        dense_model: Any
+        colbert_model: Any
+        if args.encoder == "fastembed":
+            dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            colbert_model = LateInteractionTextEmbedding(model_name="colbert-ir/colbertv2.0")
+            encoder_name = "BGE dense + ColBERTv2"
+        else:
+            dense_model = HashTextEmbedding()
+            colbert_model = HashLateInteractionEmbedding()
+            encoder_name = "hash smoke encoder"
 
-    client = make_qdrant_client(args.qdrant_url)
-    wait_for_qdrant(client)
-    signature = index_signature(products, args.encoder, len(queries), args.seed)
-    if has_reusable_index(client, len(products), signature):
-        print(f"Reusing existing Qdrant index with {len(products)} WANDS products", flush=True)
-    else:
-        texts = [product.text for product in products]
-        print(f"Initializing Qdrant index with {len(products)} WANDS products using {encoder_name}", flush=True)
-        dense_vectors = encode_dense(dense_model, texts, args.batch_size)
-        colbert_vectors = encode_colbert(colbert_model, texts, args.batch_size)
-        recreate_collections(client, len(dense_vectors[0]), len(colbert_vectors[0][0]))
-        upsert(client, products, dense_vectors, colbert_vectors, args.batch_size, index_signature=signature)
+        client = make_qdrant_client(args.qdrant_url)
+        wait_for_qdrant(client)
+        signature = index_signature(products, args.encoder, len(queries), args.seed)
+        if has_reusable_index(client, len(products), signature):
+            print(f"Reusing existing Qdrant index with {len(products)} WANDS products", flush=True)
+        else:
+            texts = [product.text for product in products]
+            print(f"Initializing Qdrant index with {len(products)} WANDS products using {encoder_name}", flush=True)
+            dense_vectors = encode_dense(dense_model, texts, args.batch_size)
+            colbert_vectors = encode_colbert(colbert_model, texts, args.batch_size)
+            recreate_collections(client, len(dense_vectors[0]), len(colbert_vectors[0][0]))
+            upsert(client, products, dense_vectors, colbert_vectors, args.batch_size, index_signature=signature)
 
     qrels_by_text = {query.text.lower(): (query.query_id, qrels[query.query_id]) for query in queries}
     sample_queries = [query.text for query in queries[:8]]
