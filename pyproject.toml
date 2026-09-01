@@ -1,0 +1,19 @@
+[project]
+name = "qdrant-wands-colbert-demo"
+version = "0.1.0"
+description = "Minimal local Qdrant + WANDS + ColBERTv2 late-interaction demo"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.116.0",
+  "fastembed>=0.7.0",
+  "numpy>=1.26",
+  "qdrant-client>=1.15,<1.16",
+  "tqdm>=4.67",
+  "uvicorn>=0.35.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4"]
+
+[tool.uv]
+package = false

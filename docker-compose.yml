@@ -1,0 +1,67 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    command:
+      - uv
+      - run
+      - --no-sync
+      - python
+      - web_demo.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --qdrant-url
+      - http://qdrant:6333
+      - --data-dir
+      - /data/wands
+      - --encoder
+      - ${DEMO_ENCODER:-fastembed}
+      - --queries
+      - ${DEMO_QUERIES:-80}
+      - --docs
+      - ${DEMO_DOCS:-6000}
+      - --top-k
+      - ${DEMO_TOP_K:-10}
+      - --batch-size
+      - ${DEMO_BATCH_SIZE:-16}
+    environment:
+      FASTEMBED_CACHE_PATH: /models/fastembed
+      HF_HOME: /models/huggingface
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_DOWNLOAD_TIMEOUT: "120"
+    ports:
+      - "${DEMO_PORT:-8000}:8000"
+    volumes:
+      - wands_data:/data
+      - model_cache:/models
+    healthcheck:
+      test:
+        - CMD
+        - uv
+        - run
+        - --no-sync
+        - python
+        - -c
+        - "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=5)); assert d['products'] > 0"
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30m
+
+volumes:
+  qdrant_storage:
+  wands_data:
+  model_cache:
