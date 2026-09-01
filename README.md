@@ -62,7 +62,7 @@ Then open:
 http://127.0.0.1:8000
 ```
 
-The left side shows **ColBERTv2 / late interaction** over Qdrant multivectors. The right side shows **dense / single-vector** search over the same products. The default Compose configuration indexes 6,000 products and exposes all 80 labelled queries used by the comparison.
+The left side shows **ColBERTv2 / late interaction** over Qdrant multivectors. The right side shows **dense / single-vector** search over the same products. Each side reports query vectorization/model-inference time separately from Qdrant search time. The default Compose configuration indexes 6,000 products and exposes all 80 labelled queries used by the comparison.
 
 ### Persistent initialization
 

@@ -13,6 +13,19 @@ import pytest
 from demo import Product, download_if_missing
 
 
+class RecordingEmbedding:
+    def query_embed(self, query_text):
+        assert query_text == "timed query"
+        yield [1.0, 2.0]
+
+
+def test_query_vectorization_timing_materializes_embedding() -> None:
+    vector, elapsed_ms = web_demo.encode_query_timed(RecordingEmbedding(), "timed query")
+
+    assert vector == [1.0, 2.0]
+    assert elapsed_ms >= 0
+
+
 def test_hash_encoder_is_stable_across_python_processes() -> None:
     code = "from demo import HashTextEmbedding; print(next(HashTextEmbedding(4).query_embed('same token')))"
     outputs = []

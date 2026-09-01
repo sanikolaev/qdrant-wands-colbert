@@ -221,8 +221,8 @@ HTML = """
         syncQueryPosition(data.query);
         renderResults(colbertResults, data.colbert.results);
         renderResults(denseResults, data.dense.results);
-        colbertMetric.textContent = `${data.colbert.elapsed_ms.toFixed(1)} ms` + (data.colbert.ndcg_at_k !== null ? ` · nDCG ${data.colbert.ndcg_at_k.toFixed(3)}` : '');
-        denseMetric.textContent = `${data.dense.elapsed_ms.toFixed(1)} ms` + (data.dense.ndcg_at_k !== null ? ` · nDCG ${data.dense.ndcg_at_k.toFixed(3)}` : '');
+        colbertMetric.textContent = `Vectorize ${data.colbert.vectorize_ms.toFixed(1)} ms · Search ${data.colbert.search_ms.toFixed(1)} ms` + (data.colbert.ndcg_at_k !== null ? ` · nDCG ${data.colbert.ndcg_at_k.toFixed(3)}` : '');
+        denseMetric.textContent = `Vectorize ${data.dense.vectorize_ms.toFixed(1)} ms · Search ${data.dense.search_ms.toFixed(1)} ms` + (data.dense.ndcg_at_k !== null ? ` · nDCG ${data.dense.ndcg_at_k.toFixed(3)}` : '');
         statusEl.textContent = `Query: “${data.query}”` + (data.known_query_id ? ` · WANDS query_id ${data.known_query_id}` : ' · free-form query');
       } catch (err) {
         statusEl.textContent = `Search failed: ${err.message || err}`;
@@ -368,6 +368,14 @@ def query_hits(client: QdrantClient, collection: str, using: str, vector: Any, l
     return hits, ranked_ids, elapsed_ms
 
 
+def encode_query_timed(model: Any, query_text: str) -> tuple[Any, float]:
+    """Materialize one query embedding and report model inference time."""
+    started = time.perf_counter()
+    vector = as_list(next(model.query_embed(query_text)))
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    return vector, elapsed_ms
+
+
 def build_state(args: argparse.Namespace) -> DemoState:
     with index_initialization_lock(args.data_dir):
         download_if_missing(args.data_dir)
@@ -463,15 +471,17 @@ def create_app(state: DemoState | None = None) -> FastAPI:
         if not query_text:
             raise HTTPException(status_code=400, detail="Query must not be empty")
         query_id, labels = state.qrels_by_text.get(query_text.lower(), (None, None))
-        dense_q = as_list(next(state.dense_model.query_embed(query_text)))
-        colbert_q = as_list(next(state.colbert_model.query_embed(query_text)))
+        dense_q, dense_vectorize_ms = encode_query_timed(state.dense_model, query_text)
+        colbert_q, colbert_vectorize_ms = encode_query_timed(state.colbert_model, query_text)
         dense_hits, dense_ids, dense_ms = query_hits(state.client, "wands_dense", "dense", dense_q, labels, state.top_k)
         colbert_hits, colbert_ids, colbert_ms = query_hits(state.client, "wands_colbert", "colbert", colbert_q, labels, state.top_k)
 
-        def metrics(ids: list[str], elapsed_ms: float, hits: list[SearchHit]) -> dict[str, Any]:
+        def metrics(ids: list[str], vectorize_ms: float, search_ms: float, hits: list[SearchHit]) -> dict[str, Any]:
             has_labels = labels is not None
             return {
-                "elapsed_ms": elapsed_ms,
+                "vectorize_ms": vectorize_ms,
+                "search_ms": search_ms,
+                "elapsed_ms": vectorize_ms + search_ms,
                 "ndcg_at_k": ndcg_at_k(ids, labels, state.top_k) if labels is not None else None,
                 "recall_at_k": recall_at_k(ids, labels, state.top_k) if labels is not None else None,
                 "results": [hit.__dict__ for hit in hits],
@@ -480,8 +490,8 @@ def create_app(state: DemoState | None = None) -> FastAPI:
         return {
             "query": query_text,
             "known_query_id": query_id,
-            "dense": metrics(dense_ids, dense_ms, dense_hits),
-            "colbert": metrics(colbert_ids, colbert_ms, colbert_hits),
+            "dense": metrics(dense_ids, dense_vectorize_ms, dense_ms, dense_hits),
+            "colbert": metrics(colbert_ids, colbert_vectorize_ms, colbert_ms, colbert_hits),
         }
 
     return app
