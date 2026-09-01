@@ -51,7 +51,8 @@ This is deliberately a list of the strongest ColBERT examples, not an aggregate 
 This is the interactive browser demo: type your own query and compare results side-by-side. The recommended launch starts both Qdrant and the application:
 
 ```bash
-cd demos/qdrant-wands-colbert
+git clone https://github.com/sanikolaev/qdrant-wands-colbert.git
+cd qdrant-wands-colbert
 docker compose up --build
 ```
 
@@ -95,7 +96,6 @@ HF_HUB_DISABLE_XET=1 uv run python web_demo.py --docs 500 --queries 10 --top-k 1
 ## Run the CLI benchmark
 
 ```bash
-cd demos/qdrant-wands-colbert
 uv sync
 docker compose up -d qdrant
 HF_HUB_DISABLE_XET=1 uv run python demo.py --queries 10 --docs 500 --top-k 10
@@ -113,7 +113,6 @@ Collections created:
 If Docker Hub or Hugging Face is temporarily unavailable, this verifies the same Qdrant collection/query mechanics with deterministic hash embeddings:
 
 ```bash
-cd demos/qdrant-wands-colbert
 uv sync
 uv run python demo.py --qdrant-url :memory: --encoder hash --queries 2 --docs 80 --top-k 5
 ```
@@ -140,5 +139,5 @@ uv run python demo.py \
 ## Notes
 
 - The first real run can take a few minutes because ColBERTv2 embeddings are CPU-heavy and model files need to be downloaded.
-- Docker Hub had transient `Bad Gateway` errors during development here, so the verified result above used Qdrant's embedded `:memory:` client. The demo still includes `docker-compose.yml` for a normal local Qdrant service.
+- Docker Compose startup, first-run initialization, persistent model/data/index volumes, and restart reuse have been verified end-to-end with both hash smoke embeddings and the real BGE + ColBERTv2 models.
 - `HF_HUB_DISABLE_XET=1` avoids optional Hugging Face Xet download behavior and made unauthenticated downloads reliable in this environment.
